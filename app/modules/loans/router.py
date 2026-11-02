@@ -1,23 +1,48 @@
-from fastapi import Depends
-from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.core.database import get_db
-from app.modules.books.repository import SqlAlchemyBookRepository
-from app.modules.loans.policies import DailyFinePolicy
-from app.modules.loans.repository import SqlAlchemyLoanRepository
+from fastapi import APIRouter, Depends
+
+from app.modules.auth.dependencies import (
+    get_member_scope,
+    require_admin,
+)
+from app.modules.auth.models import User
+from app.modules.loans.dependencies import get_loan_service
+from app.modules.loans.schemas import LoanCreate, LoanResponse
 from app.modules.loans.service import LoanService
-from app.modules.members.repository import SqlAlchemyMemberRepository
-from app.modules.payments.repository import SqlAlchemyPaymentRepository
+
+router = APIRouter(prefix="/loans", tags=["Loans"])
 
 
-def get_loan_service(db: Session = Depends(get_db)) -> LoanService:
-    return LoanService(
-        loan_repo=SqlAlchemyLoanRepository(db),
-        book_repo=SqlAlchemyBookRepository(db),
-        member_repo=SqlAlchemyMemberRepository(db),
-        payment_repo=SqlAlchemyPaymentRepository(db),
-        fine_policy=DailyFinePolicy(settings.fine_per_day),
-        loan_duration_days=settings.loan_duration_days,
-        max_active_loans=settings.max_active_loans,
-    )
+@router.post("/", response_model=LoanResponse, status_code=201)
+def borrow_book(
+    data: LoanCreate,
+    service: LoanService = Depends(get_loan_service),
+    member_scope: int | None = Depends(get_member_scope),
+):
+    return service.borrow_book(data, member_scope)
+
+
+@router.post("/{loan_id}/return", response_model=LoanResponse)
+def return_book(
+    loan_id: int,
+    service: LoanService = Depends(get_loan_service),
+    admin: User = Depends(require_admin),
+):
+    return service.return_book(loan_id)
+
+
+@router.get("/member/{member_id}", response_model=list[LoanResponse])
+def list_member_loans(
+    member_id: int,
+    service: LoanService = Depends(get_loan_service),
+    member_scope: int | None = Depends(get_member_scope),
+):
+    return service.list_member_loans(member_id, member_scope)
+
+
+@router.get("/overdue", response_model=list[LoanResponse])
+def list_overdue(
+    service: LoanService = Depends(get_loan_service),
+    admin: User = Depends(require_admin),
+):
+    return service.list_overdue()
